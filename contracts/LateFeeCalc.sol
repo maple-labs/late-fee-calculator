@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity 0.6.11;
 
-import { SafeMath } from "../../../../lib/openzeppelin-contracts/contracts/math/SafeMath.sol";
+import { SafeMath } from "../modules/openzeppelin-contracts/contracts/math/SafeMath.sol";
 
 import { ILateFeeCalc } from "./interfaces/ILateFeeCalc.sol";
 
