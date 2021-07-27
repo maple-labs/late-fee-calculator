@@ -1,84 +1,76 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity 0.6.11;
-pragma experimental ABIEncoderV2;
 
-import { SafeMath } from "../../../../../lib/openzeppelin-contracts/contracts/math/SafeMath.sol";
-import { IERC20 }   from "../../../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import { DSTest } from "../../modules/ds-test/src/test.sol";
 
-import { TestUtil } from "../../../../test/TestUtil.sol";
+import { LateFeeCalc } from "../LateFeeCalc.sol";
 
-contract LateFeeCalcTest is TestUtil {
+contract LateFeeCalcTest is DSTest {
 
-    using SafeMath for uint256;
-
-    function setUp() public {
-        setUpGlobals();
-        setUpPoolDelegate();
-        createBorrower();
-        setUpFactories();
-        setUpCalcs();
-        setUpTokens();
-        setUpOracles();
-        setUpBalancerPool();
-        setUpLiquidityPool();
+    function test_calcType() external {
+        assertTrue(new LateFeeCalc(999_999).calcType() == uint8(11));
     }
 
-    function test_late_fee(uint56 _loanAmt, uint256 apr, uint16 index, uint16 numPayments, uint256 lateFee) public {
-        uint256 loanAmt = constrictToRange(_loanAmt, 10_000 * USD, 100 * 1E9 * USD, true);  // $10k to $100b, non zero
+    function test_name() external {
+        assertTrue(new LateFeeCalc(999_999).name() == "FLAT");
+    }
 
-        apr     = apr     % 10_000;
-        lateFee = lateFee % 10_000;
+    function test_lateFee() external {
+        assertEq(new LateFeeCalc(999_999).lateFee(), 999_999);
+    }
 
-        setUpRepayments(loanAmt, apr, index, numPayments);
+    function test_getLateFee() external {
+        LateFeeCalc lateFeeCalc;
 
-        // Calculate theoretical values and sum up actual values
-        uint256 totalPaid;
-        uint256 sumTotal;
-        {
-            uint256 paymentIntervalDays = loan1.paymentIntervalSeconds().div(1 days);
-            uint256 totalInterest       = loanAmt * apr / 10_000 * paymentIntervalDays / 365 * loan1.paymentsRemaining();
-                    totalPaid           = loanAmt + totalInterest + totalInterest * lateFeeCalc.lateFee() / 10_000;
-        }
+        lateFeeCalc = new LateFeeCalc(1);
+        assertEq(lateFeeCalc.getLateFee(1),       0);
+        assertEq(lateFeeCalc.getLateFee(10),      0);
+        assertEq(lateFeeCalc.getLateFee(100),     0);
+        assertEq(lateFeeCalc.getLateFee(1_000),   0);
+        assertEq(lateFeeCalc.getLateFee(5_000),   0);
+        assertEq(lateFeeCalc.getLateFee(10_000),  1);
+        assertEq(lateFeeCalc.getLateFee(20_000),  2);
+        assertEq(lateFeeCalc.getLateFee(100_000), 10);
 
-        hevm.warp(loan1.nextPaymentDue() + 1);  // Payment is late
-        (uint256 lastTotal,,,,) =  loan1.getNextPayment();
+        lateFeeCalc = new LateFeeCalc(10);
+        assertEq(lateFeeCalc.getLateFee(1),       0);
+        assertEq(lateFeeCalc.getLateFee(10),      0);
+        assertEq(lateFeeCalc.getLateFee(100),     0);
+        assertEq(lateFeeCalc.getLateFee(1_000),   1);
+        assertEq(lateFeeCalc.getLateFee(5_000),   5);
+        assertEq(lateFeeCalc.getLateFee(10_000),  10);
+        assertEq(lateFeeCalc.getLateFee(20_000),  20);
+        assertEq(lateFeeCalc.getLateFee(100_000), 100);
 
-        mint("USDC",      address(bob),  loanAmt * 1000);  // Mint enough to pay interest
-        bob.approve(USDC, address(loan1), loanAmt * 1000);
+        lateFeeCalc = new LateFeeCalc(100);
+        assertEq(lateFeeCalc.getLateFee(1),       0);
+        assertEq(lateFeeCalc.getLateFee(10),      0);
+        assertEq(lateFeeCalc.getLateFee(100),     1);
+        assertEq(lateFeeCalc.getLateFee(1_000),   10);
+        assertEq(lateFeeCalc.getLateFee(5_000),   50);
+        assertEq(lateFeeCalc.getLateFee(10_000),  100);
+        assertEq(lateFeeCalc.getLateFee(20_000),  200);
+        assertEq(lateFeeCalc.getLateFee(100_000), 1000);
 
-        uint256 beforeBal = IERC20(USDC).balanceOf(address(bob));
+        lateFeeCalc = new LateFeeCalc(1_000);
+        assertEq(lateFeeCalc.getLateFee(1),       0);
+        assertEq(lateFeeCalc.getLateFee(10),      1);
+        assertEq(lateFeeCalc.getLateFee(100),     10);
+        assertEq(lateFeeCalc.getLateFee(1_000),   100);
+        assertEq(lateFeeCalc.getLateFee(5_000),   500);
+        assertEq(lateFeeCalc.getLateFee(10_000),  1000);
+        assertEq(lateFeeCalc.getLateFee(20_000),  2000);
+        assertEq(lateFeeCalc.getLateFee(100_000), 10000);
 
-        while (loan1.paymentsRemaining() > 0) {
-            hevm.warp(loan1.nextPaymentDue() + 1);  // Payment is late
-
-            (uint256 total,      uint256 principal,      uint256 interest,,)    = loan1.getNextPayment();                        // USDC required for payment on loan
-            (uint256 total_calc, uint256 principal_calc, uint256 interest_calc) = repaymentCalc.getNextPayment(address(loan1));  // USDC required for payment on loan
-
-            uint256 interest_late = lateFeeCalc.getLateFee(interest_calc);  // USDC required for payment on loan
-
-            assertEq(total,        total_calc + interest_late);  // Late fee is added to total
-            assertEq(principal,                principal_calc);
-            assertEq(interest,  interest_calc + interest_late);
-
-            sumTotal += total;
-
-            bob.makePayment(address(loan1));
-
-            if (loan1.paymentsRemaining() > 0) {
-                assertEq(total,     lastTotal);
-                assertEq(total,      interest);
-                assertEq(principal,         0);
-
-                assertEq(interest_late, total_calc * lateFeeCalc.lateFee() / 10_000);
-            } else {
-                assertEq(total,     principal + interest);
-                assertEq(principal,              loanAmt);
-                withinPrecision(totalPaid, sumTotal, 8);
-                assertEq(beforeBal - IERC20(USDC).balanceOf(address(bob)), sumTotal);  // Pays back all principal, plus interest
-            }
-
-            lastTotal = total;
-        }
+        lateFeeCalc = new LateFeeCalc(10_000);
+        assertEq(lateFeeCalc.getLateFee(1),       1);
+        assertEq(lateFeeCalc.getLateFee(10),      10);
+        assertEq(lateFeeCalc.getLateFee(100),     100);
+        assertEq(lateFeeCalc.getLateFee(1_000),   1000);
+        assertEq(lateFeeCalc.getLateFee(5_000),   5000);
+        assertEq(lateFeeCalc.getLateFee(10_000),  10000);
+        assertEq(lateFeeCalc.getLateFee(20_000),  20000);
+        assertEq(lateFeeCalc.getLateFee(100_000), 100000);
     }
 
 }
