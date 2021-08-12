@@ -1,0 +1,8 @@
+name: late-fee-calculator
+version: 1.0.0
+source: contracts
+packages:
+  - path: contracts/LateFeeCalc.sol
+    contractName: LateFeeCalc
+    customChecksum: 0x7e1cc50235ba3737118d3baf01282717cf7ed134cd5401678d4abc1108d65440
+customDescription: Late Fee Calculator Artifacts and ABIs
